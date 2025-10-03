@@ -59,23 +59,16 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderTasks() {
-    incompleteTasks = [];
-    completedTasks = [];
-        tasks.forEach((task,index)=>{
-            if (task.completed){
-                completedTasks.push(task)
-            }
-            else{
-                incompleteTasks.push(task)
-            }
-        })
-        tasks = [];
+    let incompleteTasks = [];
+    let completedTasks = [];
+    tasks.forEach((task) => {
+      if (task.completed) completedTasks.push(task);
+      else incompleteTasks.push(task);
+    });
+    tasks = [...incompleteTasks, ...completedTasks];
 
-        tasks = [...incompleteTasks,...completedTasks]
     taskList.innerHTML = "";
-    document.querySelector("#filter-active").innerHTML = `Active [${incompleteTasks.length}]`
-    document.querySelector("#filter-completed").innerHTML = `Completed [${completedTasks.length}]`
-        const filteredTasks = tasks.filter((task) => {
+    const filteredTasks = tasks.filter((task) => {
       if (currentFilter === "active") return !task.completed;
       if (currentFilter === "completed") return task.completed;
       return true;
