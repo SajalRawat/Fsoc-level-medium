@@ -73,6 +73,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         tasks = [...incompleteTasks,...completedTasks]
     taskList.innerHTML = "";
+    // The counts of tasks according to the filter.
     document.querySelector("#filter-active").innerHTML = `Active [${incompleteTasks.length}]`
     document.querySelector("#filter-completed").innerHTML = `Completed [${completedTasks.length}]`
         const filteredTasks = tasks.filter((task) => {
