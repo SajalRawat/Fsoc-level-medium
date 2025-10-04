@@ -1,10 +1,24 @@
 document.addEventListener("DOMContentLoaded", () => {
   // --- Task Manager Setup ---
   const taskInput = document.getElementById("task-input");
+  const dueDateInput = document.getElementById("due-date-input");
+  const prioritySelect = document.getElementById("priority-select");
   const addTaskBtn = document.getElementById("add-task-btn");
   const taskList = document.getElementById("task-list");
   const clearAllBtn = document.getElementById("clear-all-btn");
   const filterBtns = document.querySelectorAll(".filter-btn");
+  const sortTasksBtn = document.getElementById("sort-tasks-btn");
+  const sortPriorityBtn = document.getElementById("sort-priority-btn");
+  const sortDateBtn = document.getElementById("sort-date-btn");
+  const taskSearch = document.getElementById("task-search");
+  const searchBtn = document.getElementById("search-btn");
+  const clearSearchBtn = document.getElementById("clear-search-btn");
+  const searchCount = document.getElementById("search-count");
+
+  // --- Export/Import Setup ---
+  const exportBtn = document.getElementById("export-data-btn");
+  const importBtn = document.getElementById("import-data-btn");
+  const importFileInput = document.getElementById("import-file-input");
 
   // --- Weather Widget Setup ---
   const cityInput = document.getElementById("city-input");
@@ -17,13 +31,38 @@ document.addEventListener("DOMContentLoaded", () => {
   let tasks = JSON.parse(localStorage.getItem("tasks")) || [];
   let currentFilter = "all";
   let weatherSearchTimeout = null;
+  let sortType = "none";
 
-  
-  
-  const weatherApiKey = "4b1ee5452a2e3f68205153f28bf93927"; 
+  // --- Sorting State ---
+  let sortState = JSON.parse(localStorage.getItem("sortState")) || {
+    key: "title",
+    direction: "asc"
+  };
+
+  // --- Weather API Key ---
+  const weatherApiKey = "4b1ee5452a2e3f68205153f28bf93927";
   const DEBOUNCE_DELAY = 500;
   const WEATHER_TIMEOUT_MS = 8000;
-  const MAX_RETRIES = 100;
+  const MAX_RETRIES = 3;
+
+  // --- Validation State ---
+  let taskInputError = taskInput.parentNode.querySelector(".input-error");
+  if (!taskInputError) {
+    taskInputError = document.createElement("span");
+    taskInputError.className = "input-error";
+    taskInputError.setAttribute("aria-live", "polite");
+    taskInputError.style.display = "none";
+    taskInput.parentNode.insertBefore(taskInputError, taskInput.nextSibling);
+  }
+
+  let dueDateInputError = dueDateInput.parentNode.querySelector(".input-error");
+  if (!dueDateInputError) {
+    dueDateInputError = document.createElement("span");
+    dueDateInputError.className = "input-error";
+    dueDateInputError.setAttribute("aria-live", "polite");
+    dueDateInputError.style.display = "none";
+    dueDateInput.parentNode.insertBefore(dueDateInputError, dueDateInput.nextSibling);
+  }
 
   // --- Utility Functions ---
   function debounce(func, delay) {
@@ -33,80 +72,122 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
+  function escRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function highlightMatch(text, query) {
+    if (!query) return text;
+    const r = new RegExp(`(${escRegex(query)})`, "gi");
+    return text.replace(r, "<mark>$1</mark>");
+  }
+
+  function levenshtein(a, b) {
+    const al = a.length, bl = b.length;
+    if (!al) return bl;
+    if (!bl) return al;
+    const v0 = Array.from({ length: bl + 1 }, (_, i) => i);
+    const v1 = new Array(bl + 1);
+    for (let i = 1; i <= al; i++) {
+      v1[0] = i;
+      for (let j = 1; j <= bl; j++) {
+        const cost = a[i - 1].toLowerCase() === b[j - 1].toLowerCase() ? 0 : 1;
+        v1[j] = Math.min(v1[j - 1] + 1, v0[j] + 1, v0[j - 1] + cost);
+      }
+      for (let j = 0; j <= bl; j++) v0[j] = v1[j];
+    }
+    return v1[bl];
+  }
+
+  function fuzzyMatch(text, query) {
+    if (!query) return false;
+    const t = (text || "").toLowerCase();
+    const q = query.toLowerCase();
+    if (q.length <= 1) return t.includes(q);
+    if (t.includes(q)) return true;
+    const threshold = Math.max(1, Math.floor(q.length * 0.28));
+    return levenshtein(t, q) <= threshold;
+  }
+
   function saveTasks() {
     localStorage.setItem("tasks", JSON.stringify(tasks));
   }
 
-  function createTaskElement(task, index) {
-    const li = document.createElement("li");
-    li.className = "task-item";
-    li.dataset.index = index;
-
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = task.completed;
-    checkbox.dataset.action = "toggle";
-
-    const taskText = document.createElement("span");
-    taskText.textContent = task.text;
-    if (task.completed) taskText.classList.add("completed");
-    taskText.dataset.action = "edit";
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.className = "delete-btn";
-    deleteBtn.textContent = "🗑️";
-    deleteBtn.dataset.action = "delete";
-
-    li.appendChild(checkbox);
-    li.appendChild(taskText);
-    li.appendChild(deleteBtn);
-    return li;
+  function saveSortState() {
+    localStorage.setItem("sortState", JSON.stringify(sortState));
   }
 
-  function renderTasks() {
-    let incompleteTasks = [];
-    let completedTasks = [];
-    tasks.forEach((task, index) => {
-      if (task.completed) completedTasks.push(task);
-      else incompleteTasks.push(task);
-    });
-    tasks = [...incompleteTasks, ...completedTasks];
-
-    taskList.innerHTML = "";
-    // Check if filter buttons exist before updating their text
-    const filterActiveBtn = document.querySelector("#filter-active");
-    const filterCompletedBtn = document.querySelector("#filter-completed");
-    if (filterActiveBtn) filterActiveBtn.innerHTML = `Active [${incompleteTasks.length}]`;
-    if (filterCompletedBtn) filterCompletedBtn.innerHTML = `Completed [${completedTasks.length}]`;
-
-    const filteredTasks = tasks.filter((task) => {
-      if (currentFilter === "active") return !task.completed;
-      if (currentFilter === "completed") return task.completed;
-      return true;
-    });
-
-    if (filteredTasks.length === 0) {
-      const empty = document.createElement("li");
-      empty.className = "task-empty-state";
-      empty.setAttribute("aria-live", "polite");
-      empty.textContent = "No tasks here. Add a new one or change your filter!";
-      taskList.appendChild(empty);
-      return;
+  // --- Validation Functions ---
+  function validateTaskInput() {
+    const value = taskInput.value.trim();
+    if (!value) {
+      taskInput.classList.add("input-invalid");
+      taskInput.classList.remove("input-valid");
+      taskInputError.textContent = "Task title is required.";
+      taskInputError.style.display = "block";
+      return false;
     }
-
-    filteredTasks.forEach((task) => {
-      const originalIndex = tasks.findIndex((t) => t === task);
-      taskList.appendChild(createTaskElement(task, originalIndex));
-    });
+    if (value.length < 3) {
+      taskInput.classList.add("input-invalid");
+      taskInput.classList.remove("input-valid");
+      taskInputError.textContent = "Task title must be at least 3 characters.";
+      taskInputError.style.display = "block";
+      return false;
+    }
+    taskInput.classList.remove("input-invalid");
+    taskInput.classList.add("input-valid");
+    taskInputError.textContent = "";
+    taskInputError.style.display = "none";
+    return true;
   }
 
+  function validateDueDateInput() {
+    const value = dueDateInput.value;
+    if (value) {
+      const selectedDate = new Date(value);
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      if (selectedDate < today) {
+        dueDateInput.classList.add("input-invalid");
+        dueDateInput.classList.remove("input-valid");
+        dueDateInputError.textContent = "Due date cannot be in the past.";
+        dueDateInputError.style.display = "block";
+        return false;
+      }
+    }
+    dueDateInput.classList.remove("input-invalid");
+    if (value) dueDateInput.classList.add("input-valid");
+    dueDateInputError.textContent = "";
+    dueDateInputError.style.display = "none";
+    return true;
+  }
+
+  function validateForm() {
+    const validTask = validateTaskInput();
+    const validDate = validateDueDateInput();
+    return validTask && validDate;
+  }
+
+  // --- Task Data Model ---
   function addTask() {
+    if (!validateForm()) return;
     const text = taskInput.value.trim();
-    if (!text) return;
-    const newTask = { text, completed: false };
+    const dueDate = dueDateInput.value ? dueDateInput.value : null;
+    const priority = parseInt(prioritySelect.value);
+    const newTask = {
+      text,
+      completed: false,
+      created: Date.now(),
+      priority,
+      dueDate
+    };
     tasks.push(newTask);
     saveTasks();
     taskInput.value = "";
+    dueDateInput.value = "";
+    prioritySelect.value = "2";
+    taskInput.classList.remove("input-valid");
+    dueDateInput.classList.remove("input-valid");
     renderTasks();
   }
 
@@ -128,6 +209,21 @@ document.addEventListener("DOMContentLoaded", () => {
     renderTasks();
   }
 
+  function changePriority(index, newPriority) {
+    tasks[index].priority = parseInt(newPriority);
+    saveTasks();
+    renderTasks();
+  }
+
+  function getPriorityBadge(priority) {
+    const badges = {
+      1: '<span class="priority-badge priority-high">High</span>',
+      2: '<span class="priority-badge priority-medium">Medium</span>',
+      3: '<span class="priority-badge priority-low">Low</span>'
+    };
+    return badges[priority] || badges[2];
+  }
+
   function enableInlineEdit(index, spanEl) {
     if (spanEl.parentElement.querySelector(".task-edit-input")) return;
     const originalText = tasks[index].text;
@@ -141,6 +237,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const saveChanges = () => {
       const newText = input.value.trim();
+      if (newText.length < 3) {
+        input.classList.add("input-invalid");
+        input.classList.remove("input-valid");
+        return;
+      }
       tasks[index].text = newText || originalText;
       saveTasks();
       renderTasks();
@@ -154,6 +255,284 @@ document.addEventListener("DOMContentLoaded", () => {
         input.blur();
       }
     });
+  }
+
+  // --- Sorting ---
+  function sortTasksByType(tasksArr) {
+    let sorted = [...tasksArr];
+    
+    if (sortType === "priority") {
+      sorted.sort((a, b) => a.priority - b.priority);
+    } else if (sortType === "date") {
+      sorted.sort((a, b) => b.created - a.created);
+    } else if (sortType === "title") {
+      sorted.sort((a, b) => 
+        sortState.direction === "asc"
+          ? a.text.localeCompare(b.text)
+          : b.text.localeCompare(a.text)
+      );
+    }
+    
+    return sorted;
+  }
+
+  function sortTasksByColumn(tasksArr) {
+    let sorted = [...tasksArr];
+    switch (sortState.key) {
+      case "title":
+        sorted.sort((a, b) =>
+          sortState.direction === "asc"
+            ? a.text.localeCompare(b.text)
+            : b.text.localeCompare(a.text)
+        );
+        break;
+      case "date":
+        sorted.sort((a, b) =>
+          sortState.direction === "asc"
+            ? a.created - b.created
+            : b.created - a.created
+        );
+        break;
+      case "priority":
+        sorted.sort((a, b) =>
+          sortState.direction === "asc"
+            ? a.priority - b.priority
+            : b.priority - a.priority
+        );
+        break;
+      case "status":
+        sorted.sort((a, b) =>
+          sortState.direction === "asc"
+            ? a.completed - b.completed
+            : b.completed - a.completed
+        );
+        break;
+      case "dueDate":
+        sorted.sort((a, b) => {
+          if (!a.dueDate && !b.dueDate) return 0;
+          if (!a.dueDate) return 1;
+          if (!b.dueDate) return -1;
+          return sortState.direction === "asc"
+            ? new Date(a.dueDate) - new Date(b.dueDate)
+            : new Date(b.dueDate) - new Date(a.dueDate);
+        });
+        break;
+      default:
+        break;
+    }
+    return sorted;
+  }
+
+  function renderTasks() {
+    let incompleteTasks = [];
+    let completedTasks = [];
+    tasks.forEach((task, index) => {
+      if (task.completed) completedTasks.push(task);
+      else incompleteTasks.push(task);
+    });
+
+    // Filtering
+    let filteredTasks = tasks.filter((task) => {
+      if (currentFilter === "active") return !task.completed;
+      if (currentFilter === "completed") return task.completed;
+      if (currentFilter === "priority-1") return task.priority === 1;
+      if (currentFilter === "priority-2") return task.priority === 2;
+      if (currentFilter === "priority-3") return task.priority === 3;
+      return true;
+    });
+
+    const q = taskSearch ? taskSearch.value.trim() : "";
+    const matches = q
+      ? filteredTasks.filter((t) =>
+          fuzzyMatch(t.text, q) || fuzzyMatch(t.description || "", q) || (Array.isArray(t.tags) && t.tags.some(tag => fuzzyMatch(tag, q)))
+        )
+      : [];
+    if (searchCount) searchCount.textContent = q ? `${matches.length} match(es)` : "";
+    if (q && searchBtn && searchBtn.dataset.active === "true") filteredTasks = matches;
+
+    // Sorting
+    if (sortType !== "none") {
+      filteredTasks = sortTasksByType(filteredTasks);
+    } else {
+      filteredTasks = sortTasksByColumn(filteredTasks);
+    }
+
+    taskList.innerHTML = "";
+    const filterActiveBtn = document.querySelector("#filter-active");
+    const filterCompletedBtn = document.querySelector("#filter-completed");
+    if (filterActiveBtn) filterActiveBtn.innerHTML = `Active [${incompleteTasks.length}]`;
+    if (filterCompletedBtn) filterCompletedBtn.innerHTML = `Completed [${completedTasks.length}]`;
+
+    if (filteredTasks.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "task-empty-state";
+      empty.setAttribute("aria-live", "polite");
+      empty.textContent = "No tasks here. Add a new one or change your filter!";
+      taskList.appendChild(empty);
+      return;
+    }
+
+    // Table header for sorting
+    const header = document.createElement("li");
+    header.className = "task-header";
+    header.innerHTML = `
+      <span class="sortable" data-sort="title">Title ${sortState.key === "title" ? (sortState.direction === "asc" ? "▲" : "▼") : ""}</span>
+      <span class="sortable" data-sort="date">Date Added ${sortState.key === "date" ? (sortState.direction === "asc" ? "▲" : "▼") : ""}</span>
+      <span class="sortable" data-sort="dueDate">Due Date ${sortState.key === "dueDate" ? (sortState.direction === "asc" ? "▲" : "▼") : ""}</span>
+      <span class="sortable" data-sort="priority">Priority ${sortState.key === "priority" ? (sortState.direction === "asc" ? "▲" : "▼") : ""}</span>
+      <span class="sortable" data-sort="status">Status ${sortState.key === "status" ? (sortState.direction === "asc" ? "▲" : "▼") : ""}</span>
+      <span></span>
+    `;
+    header.style.fontWeight = "bold";
+    header.style.background = "rgba(0,0,0,0.03)";
+    header.style.borderBottom = "1px solid var(--border-color)";
+    header.style.display = "grid";
+    header.style.gridTemplateColumns = "2fr 1fr 1fr 1fr 1fr 0.5fr";
+    header.style.alignItems = "center";
+    header.style.padding = "0.5rem 0.5rem";
+    taskList.appendChild(header);
+
+    filteredTasks.forEach((task, idx) => {
+      const originalIndex = tasks.findIndex((t) => t === task);
+      const li = document.createElement("li");
+      li.className = "task-item";
+      li.dataset.index = originalIndex;
+      li.style.display = "grid";
+      li.style.gridTemplateColumns = "2fr 1fr 1fr 1fr 1fr 0.5fr";
+      li.style.alignItems = "center";
+      li.style.padding = "0.5rem 0.5rem";
+      li.style.transition = "background 0.2s";
+
+      // Highlight overdue tasks
+      let isOverdue = false;
+      if (task.dueDate && !task.completed) {
+        const now = new Date();
+        const due = new Date(task.dueDate);
+        now.setHours(0,0,0,0);
+        if (due < now) {
+          li.classList.add("overdue-task");
+          isOverdue = true;
+        }
+      }
+
+      // Title with checkbox
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = task.completed;
+      checkbox.dataset.action = "toggle";
+      checkbox.style.marginRight = "0.5rem";
+
+      const taskText = document.createElement("span");
+      const qval = taskSearch ? taskSearch.value.trim() : "";
+      taskText.innerHTML = qval ? highlightMatch(task.text, qval) : task.text;
+      if (task.completed) taskText.classList.add("completed");
+      taskText.dataset.action = "edit";
+
+      const titleCell = document.createElement("span");
+      titleCell.appendChild(checkbox);
+      titleCell.appendChild(taskText);
+      titleCell.innerHTML += getPriorityBadge(task.priority);
+
+      // Date Added
+      const dateCell = document.createElement("span");
+      const dateObj = new Date(task.created);
+      dateCell.textContent = dateObj.toLocaleDateString() + " " + dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      // Due Date
+      const dueDateCell = document.createElement("span");
+      dueDateCell.textContent = task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "-";
+      if (isOverdue) dueDateCell.classList.add("overdue-date");
+
+      // Priority Dropdown
+      const priorityDropdown = document.createElement("select");
+      priorityDropdown.className = "priority-dropdown";
+      priorityDropdown.innerHTML = `
+        <option value="1" ${task.priority === 1 ? "selected" : ""}>🔴 High</option>
+        <option value="2" ${task.priority === 2 ? "selected" : ""}>🟡 Medium</option>
+        <option value="3" ${task.priority === 3 ? "selected" : ""}>🟢 Low</option>
+      `;
+      priorityDropdown.addEventListener("change", (e) => {
+        changePriority(originalIndex, e.target.value);
+      });
+
+      // Status
+      const statusCell = document.createElement("span");
+      statusCell.textContent = task.completed ? "Done" : "Active";
+      statusCell.style.color = task.completed ? "var(--completed-color)" : "var(--primary-color)";
+
+      // Delete
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "delete-btn";
+      deleteBtn.textContent = "🗑️";
+      deleteBtn.dataset.action = "delete";
+
+      if (task.description) {
+        const descSpan = document.createElement("span");
+        descSpan.className = "task-desc";
+        descSpan.innerHTML = qval ? highlightMatch(`(${task.description})`, qval) : `(${task.description})`;
+        titleCell.appendChild(descSpan);
+      }
+
+      li.appendChild(titleCell);
+      li.appendChild(dateCell);
+      li.appendChild(dueDateCell);
+      li.appendChild(priorityDropdown);
+      li.appendChild(statusCell);
+      li.appendChild(deleteBtn);
+      taskList.appendChild(li);
+    });
+
+    // Add sorting event listeners to column headers
+    taskList.querySelectorAll(".sortable").forEach((el) => {
+      el.style.cursor = "pointer";
+      el.addEventListener("click", () => {
+        const key = el.dataset.sort;
+        if (sortState.key === key) {
+          sortState.direction = sortState.direction === "asc" ? "desc" : "asc";
+        } else {
+          sortState.key = key;
+          sortState.direction = "asc";
+        }
+        sortType = "none";
+        saveSortState();
+        renderTasks();
+      });
+    });
+  }
+
+  // --- Export/Import Functions ---
+  function exportTasks() {
+    const dataStr = JSON.stringify(tasks, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "tasks-export.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function importTasksFromFile(file) {
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        const imported = JSON.parse(e.target.result);
+        if (Array.isArray(imported)) {
+          tasks = imported;
+          saveTasks();
+          renderTasks();
+          alert("Tasks imported successfully!");
+        } else {
+          alert("Invalid file format.");
+        }
+      } catch (err) {
+        alert("Error importing tasks: " + err.message);
+      }
+    };
+    reader.readAsText(file);
   }
 
   // --- Weather Functions ---
@@ -289,7 +668,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- Task Events ---
   addTaskBtn.addEventListener("click", addTask);
+  taskInput.addEventListener("input", validateTaskInput);
+  dueDateInput.addEventListener("input", validateDueDateInput);
   taskInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addTask();
+  });
+  dueDateInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") addTask();
   });
   clearAllBtn.addEventListener("click", clearAllTasks);
@@ -316,6 +700,59 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  if (taskSearch) {
+    taskSearch.addEventListener("input", () => {
+      renderTasks();
+    });
+  }
+
+  if (searchBtn) {
+    searchBtn.addEventListener("click", () => {
+      const isActive = searchBtn.dataset.active === "true";
+      searchBtn.dataset.active = isActive ? "false" : "true";
+      searchBtn.classList.toggle("active", !isActive);
+      renderTasks();
+    });
+  }
+
+  if (clearSearchBtn) {
+    clearSearchBtn.addEventListener("click", () => {
+      if (taskSearch) taskSearch.value = "";
+      if (searchBtn) {
+        searchBtn.dataset.active = "false";
+        searchBtn.classList.remove("active");
+      }
+      if (searchCount) searchCount.textContent = "";
+      renderTasks();
+    });
+  }
+
+  window.addEventListener("keydown", (e) => {
+    const isMac = navigator.platform.toUpperCase().includes('MAC');
+    const mod = isMac ? e.metaKey : e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 'f') {
+      if (taskSearch) {
+        e.preventDefault();
+        taskSearch.focus();
+        taskSearch.select();
+      }
+    }
+  });
+
+  // --- Export/Import Events ---
+  if (exportBtn) {
+    exportBtn.addEventListener("click", exportTasks);
+  }
+  if (importBtn && importFileInput) {
+    importBtn.addEventListener("click", () => importFileInput.click());
+    importFileInput.addEventListener("change", (e) => {
+      if (e.target.files.length > 0) {
+        importTasksFromFile(e.target.files[0]);
+        importFileInput.value = "";
+      }
+    });
+  }
+
   // --- Theme Toggle ---
   if (themeToggle) {
     themeToggle.addEventListener("click", () => {
@@ -323,11 +760,55 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // --- Priority Sort Button ---
+  if (sortPriorityBtn) {
+    sortPriorityBtn.addEventListener("click", () => {
+      if (sortType === "priority") {
+        sortType = "none";
+        sortPriorityBtn.textContent = "Sort by Priority";
+      } else {
+        sortType = "priority";
+        sortPriorityBtn.textContent = "Clear Priority Sort";
+      }
+      renderTasks();
+    });
+  }
+
+  // --- Date Sort Button ---
+  if (sortDateBtn) {
+    sortDateBtn.addEventListener("click", () => {
+      if (sortType === "date") {
+        sortType = "none";
+        sortDateBtn.textContent = "Sort by Date";
+      } else {
+        sortType = "date";
+        sortDateBtn.textContent = "Clear Date Sort";
+      }
+      renderTasks();
+    });
+  }
+
+  // --- Sort A-Z Button ---
+  if (sortTasksBtn) {
+    sortTasksBtn.addEventListener("click", () => {
+      if (sortType === "title") {
+        sortType = "none";
+        sortState.direction = sortState.direction === "asc" ? "desc" : "asc";
+      } else {
+        sortType = "title";
+        sortState.key = "title";
+        sortState.direction = "asc";
+      }
+      saveSortState();
+      renderTasks();
+    });
+  }
+
   // --- Init ---
   function init() {
     renderTasks();
     if (yearSpan) yearSpan.textContent = new Date().getFullYear();
-    getLocationWeather(); // Show local weather on page load
+    getLocationWeather();
   }
 
   init();
