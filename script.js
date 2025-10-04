@@ -29,9 +29,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const yearSpan = document.getElementById("year");
 
   let tasks = JSON.parse(localStorage.getItem("tasks")) || [];
+  let tagRegistry = JSON.parse(localStorage.getItem("tags")) || {};
+  let activeTagFilter = null;
   let currentFilter = "all";
-  let weatherSearchTimeout = null;
   let sortType = "none";
+  let currentWeatherController = null;
 
   // --- Sorting State ---
   let sortState = JSON.parse(localStorage.getItem("sortState")) || {
@@ -66,9 +68,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- Utility Functions ---
   function debounce(func, delay) {
+    let timer = null;
     return function (...args) {
-      clearTimeout(weatherSearchTimeout);
-      weatherSearchTimeout = setTimeout(() => func.apply(this, args), delay);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => func.apply(this, args), delay);
     };
   }
 
@@ -116,6 +119,25 @@ document.addEventListener("DOMContentLoaded", () => {
   function saveSortState() {
     localStorage.setItem("sortState", JSON.stringify(sortState));
   }
+
+  function saveTags() {
+    localStorage.setItem("tags", JSON.stringify(tagRegistry));
+  }
+
+  function normalizeTask(t) {
+    return {
+      text: t.text || "",
+      description: t.description || "",
+      tags: Array.isArray(t.tags) ? t.tags : [],
+      completed: !!t.completed,
+      created: t.created || Date.now(),
+      priority: typeof t.priority === 'number' ? t.priority : 2,
+      dueDate: t.dueDate || null
+    };
+  }
+
+  tasks = tasks.map(normalizeTask);
+  saveTasks();
 
   // --- Validation Functions ---
   function validateTaskInput() {
@@ -168,14 +190,64 @@ document.addEventListener("DOMContentLoaded", () => {
     return validTask && validDate;
   }
 
+  function updateTaskProgressBar() {
+    const total = tasks.length;
+    const completed = tasks.filter(t => t.completed).length;
+    const percent = total === 0 ? 0 : Math.round((completed / total) * 100);
+
+    const bar = document.getElementById("task-progress-bar");
+    if (bar) {
+      bar.style.width = percent + "%";
+      if (percent < 30) {
+        bar.style.background = "linear-gradient(90deg,#e94560 0%,#f9d423 100%)";
+      } else if (percent < 70) {
+        bar.style.background = "linear-gradient(90deg,#f9d423 0%,#4f8cff 100%)";
+      } else {
+        bar.style.background = "linear-gradient(90deg,#28a745 0%,#4f8cff 100%)";
+      }
+    }
+
+    const percentLabel = document.getElementById("task-progress-percent");
+    if (percentLabel) percentLabel.textContent = percent + "%";
+
+    const summary = document.getElementById("task-progress-summary");
+    if (summary) summary.textContent = `${completed} of ${total} tasks completed`;
+
+    const ring = document.getElementById("task-progress-ring");
+    const ringLabel = document.getElementById("task-progress-ring-label");
+    if (ring && ringLabel) {
+      const radius = 26;
+      const circumference = 2 * Math.PI * radius;
+      const offset = circumference * (1 - percent / 100);
+      ring.setAttribute("stroke-dasharray", `${circumference}`);
+      ring.setAttribute("stroke-dashoffset", `${offset}`);
+      if (percent < 30) {
+        ring.setAttribute("stroke", "#e94560");
+      } else if (percent < 70) {
+        ring.setAttribute("stroke", "#f9d423");
+      } else {
+        ring.setAttribute("stroke", "#28a745");
+      }
+      ringLabel.textContent = percent + "%";
+    }
+  }
+
   // --- Task Data Model ---
   function addTask() {
     if (!validateForm()) return;
     const text = taskInput.value.trim();
     const dueDate = dueDateInput.value ? dueDateInput.value : null;
-    const priority = parseInt(prioritySelect.value);
+    const priority = prioritySelect ? parseInt(prioritySelect.value) : 2;
+    const rawTags = document.getElementById('task-tags') ? document.getElementById('task-tags').value : '';
+    const cleaned = sanitizeTagInputValue(rawTags);
+    const tags = cleaned.split(/\s+/).filter(Boolean);
+    tags.forEach(tag => { tagRegistry[tag] = (tagRegistry[tag] || 0) + 1; });
+    saveTags();
+    
     const newTask = {
       text,
+      description: '',
+      tags,
       completed: false,
       created: Date.now(),
       priority,
@@ -183,30 +255,61 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     tasks.push(newTask);
     saveTasks();
+    
+    if (activeTagFilter) {
+      const matchesFilter = Array.isArray(newTask.tags) && newTask.tags.includes(activeTagFilter);
+      if (!matchesFilter) {
+        activeTagFilter = null;
+        const sel = document.getElementById('tag-filter-select');
+        if (sel) sel.value = '';
+      }
+    }
+    
     taskInput.value = "";
     dueDateInput.value = "";
-    prioritySelect.value = "2";
+    if (prioritySelect) prioritySelect.value = "2";
+    if (document.getElementById('task-tags')) document.getElementById('task-tags').value = '';
     taskInput.classList.remove("input-valid");
     dueDateInput.classList.remove("input-valid");
+    renderPopularTags();
     renderTasks();
+    updateTaskProgressBar();
   }
 
   function deleteTask(index) {
+    const t = tasks[index];
+    if (t && Array.isArray(t.tags)) {
+      t.tags.forEach(tag => {
+        if (tagRegistry[tag]) {
+          tagRegistry[tag] = Math.max(0, tagRegistry[tag] - 1);
+          if (tagRegistry[tag] === 0) delete tagRegistry[tag];
+        }
+      });
+      saveTags();
+    }
     tasks.splice(index, 1);
     saveTasks();
+    rebuildTagRegistryFromTasks();
+    renderPopularTags();
     renderTasks();
+    updateTaskProgressBar();
   }
 
   function clearAllTasks() {
     tasks = [];
+    tagRegistry = {};
+    saveTags();
     saveTasks();
+    renderPopularTags();
     renderTasks();
+    updateTaskProgressBar();
   }
 
   function toggleTaskCompletion(index) {
     tasks[index].completed = !tasks[index].completed;
     saveTasks();
     renderTasks();
+    updateTaskProgressBar();
   }
 
   function changePriority(index, newPriority) {
@@ -303,8 +406,8 @@ document.addEventListener("DOMContentLoaded", () => {
       case "status":
         sorted.sort((a, b) =>
           sortState.direction === "asc"
-            ? a.completed - b.completed
-            : b.completed - a.completed
+            ? Number(a.completed) - Number(b.completed)
+            : Number(b.completed) - Number(a.completed)
         );
         break;
       case "dueDate":
@@ -326,7 +429,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function renderTasks() {
     let incompleteTasks = [];
     let completedTasks = [];
-    tasks.forEach((task, index) => {
+    tasks.forEach((task) => {
       if (task.completed) completedTasks.push(task);
       else incompleteTasks.push(task);
     });
@@ -338,6 +441,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (currentFilter === "priority-1") return task.priority === 1;
       if (currentFilter === "priority-2") return task.priority === 2;
       if (currentFilter === "priority-3") return task.priority === 3;
+      if (activeTagFilter) return task.tags && task.tags.includes(activeTagFilter);
       return true;
     });
 
@@ -392,7 +496,7 @@ document.addEventListener("DOMContentLoaded", () => {
     header.style.padding = "0.5rem 0.5rem";
     taskList.appendChild(header);
 
-    filteredTasks.forEach((task, idx) => {
+    filteredTasks.forEach((task) => {
       const originalIndex = tasks.findIndex((t) => t === task);
       const li = document.createElement("li");
       li.className = "task-item";
@@ -466,11 +570,35 @@ document.addEventListener("DOMContentLoaded", () => {
       deleteBtn.textContent = "🗑️";
       deleteBtn.dataset.action = "delete";
 
+      // Tags badges
+      const tagsCell = document.createElement('span');
+      if (Array.isArray(task.tags)) {
+        task.tags.forEach(tg => {
+          const badge = document.createElement('span');
+          badge.className = 'tag-badge';
+          const tc = getTagColors(tg);
+          badge.style.background = tc.bg;
+          badge.style.color = tc.color;
+          badge.textContent = tg;
+          badge.title = `Filter by ${tg}`;
+          badge.addEventListener('click', () => {
+            activeTagFilter = tg;
+            renderTasks();
+          });
+          tagsCell.appendChild(badge);
+          tagsCell.appendChild(document.createTextNode(' '));
+        });
+      }
+
       if (task.description) {
         const descSpan = document.createElement("span");
         descSpan.className = "task-desc";
         descSpan.innerHTML = qval ? highlightMatch(`(${task.description})`, qval) : `(${task.description})`;
         titleCell.appendChild(descSpan);
+      }
+
+      if (tagsCell && tagsCell.childElementCount > 0) {
+        titleCell.appendChild(tagsCell);
       }
 
       li.appendChild(titleCell);
@@ -500,6 +628,255 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Tag helpers
+  function getTagColors(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    const hue = Math.abs(hash) % 360;
+    let sat = 70;
+    let light = 50;
+    if (hue >= 30 && hue <= 70) {
+      sat = 78;
+      light = 62;
+    }
+    if (hue <= 15 || hue >= 345) {
+      sat = 72;
+      light = 56;
+    }
+    if ((hue > 70 && hue < 160) || (hue > 200 && hue < 280)) {
+      sat = 65;
+      light = 52;
+    }
+    const bg = `hsl(${hue} ${sat}% ${light}%)`;
+    const textColor = light > 58 ? '#222' : '#fff';
+    return { bg, color: textColor };
+  }
+
+  function renderPopularTags() {
+    const popular = document.getElementById('popular-tags');
+    if (!popular) return;
+    popular.innerHTML = '';
+    const entries = Object.entries(tagRegistry).sort((a,b) => b[1]-a[1]).slice(0,8);
+    entries.forEach(([tag, count]) => {
+      const el = document.createElement('span');
+      el.className = 'tag-badge';
+      const tcolors = getTagColors(tag);
+      el.style.background = tcolors.bg;
+      el.style.color = tcolors.color;
+      el.textContent = `${tag} (${count})`;
+      el.addEventListener('click', () => { activeTagFilter = tag; renderTasks(); });
+      popular.appendChild(el);
+    });
+    const activeWrap = document.getElementById('active-tag-filter');
+    if (activeWrap) activeWrap.textContent = activeTagFilter ? `Filtering: ${activeTagFilter}` : '';
+    updateTagFilterOptions();
+  }
+
+  function updateTagFilterOptions() {
+    const sel = document.getElementById('tag-filter-select');
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = '-- Filter by tag --';
+    sel.appendChild(noneOpt);
+    Object.entries(tagRegistry).sort((a,b)=> b[1]-a[1]).forEach(([tag,count]) => {
+      const o = document.createElement('option');
+      o.value = tag;
+      o.textContent = `${tag} (${count})`;
+      sel.appendChild(o);
+    });
+    if (prev && Array.from(sel.options).some(o=>o.value===prev)) sel.value = prev;
+  }
+
+  function renderTagSuggestions(prefix) {
+    const wrap = document.getElementById('tag-suggestions');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    if (!prefix) return;
+    const lower = prefix.toLowerCase();
+    const matches = Object.keys(tagRegistry).filter(t => t.startsWith(lower)).slice(0,8);
+    matches.forEach(m => {
+      const el = document.createElement('span');
+      el.className = 'tag-suggestion-item';
+      el.textContent = m;
+      el.addEventListener('click', () => {
+        const input = document.getElementById('task-tags');
+        if (!input) return;
+        const parts = input.value.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean);
+        if (!parts.includes(m)) parts.push(m);
+        input.value = parts.join(' ');
+        renderTagSuggestions('');
+      });
+      wrap.appendChild(el);
+    });
+  }
+
+  function getCurrentTagPrefix() {
+    const input = document.getElementById('task-tags');
+    if (!input) return '';
+    const raw = input.value || '';
+    const parts = raw.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean);
+    return parts.length ? parts[parts.length-1].toLowerCase() : '';
+  }
+
+  function sanitizeTagInputValue(val) {
+    const parts = val.split(/[\s,]+/).map(s => s.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase()).filter(Boolean);
+    return parts.join(' ');
+  }
+
+  function renameTag(oldTag, newTag) {
+    if (!oldTag || !newTag) return;
+    oldTag = oldTag.toLowerCase();
+    newTag = newTag.toLowerCase();
+    if (oldTag === newTag) return;
+    tasks.forEach(t => {
+      if (!Array.isArray(t.tags)) return;
+      if (t.tags.includes(oldTag)) {
+        t.tags = t.tags.filter(x => x !== oldTag);
+        if (!t.tags.includes(newTag)) t.tags.push(newTag);
+      }
+    });
+    const oldCount = tagRegistry[oldTag] || 0;
+    const newCount = tagRegistry[newTag] || 0;
+    const merged = oldCount + newCount;
+    if (merged > 0) tagRegistry[newTag] = merged;
+    delete tagRegistry[oldTag];
+    saveTags();
+    saveTasks();
+    renderPopularTags();
+    renderTagSuggestions(document.getElementById('task-tags') ? document.getElementById('task-tags').value : '');
+    renderTasks();
+  }
+
+  function deleteTag(tag) {
+    if (!tag) return;
+    tag = tag.toLowerCase();
+    if (!confirm(`Delete tag '${tag}' from all tasks? This cannot be undone.`)) return;
+    delete tagRegistry[tag];
+    tasks.forEach(t => {
+      if (!Array.isArray(t.tags)) return;
+      t.tags = t.tags.filter(x => x !== tag);
+    });
+    saveTags();
+    saveTasks();
+    rebuildTagRegistryFromTasks();
+    renderPopularTags();
+    renderTagSuggestions(document.getElementById('task-tags') ? document.getElementById('task-tags').value : '');
+    renderTasks();
+  }
+
+  function rebuildTagRegistryFromTasks() {
+    tagRegistry = {};
+    tasks.forEach(t => {
+      if (!Array.isArray(t.tags)) return;
+      t.tags.forEach(tag => {
+        const k = (typeof tag === 'string') ? tag.toLowerCase() : tag;
+        if (!k) return;
+        tagRegistry[k] = (tagRegistry[k] || 0) + 1;
+      });
+    });
+    saveTags();
+  }
+
+  function renderTagManager() {
+    const mgr = document.getElementById('tag-manager');
+    if (!mgr) return;
+    mgr.innerHTML = '';
+    const entries = Object.entries(tagRegistry).sort((a,b)=> b[1]-a[1]);
+    if (entries.length === 0) {
+      mgr.textContent = 'No tags created yet.';
+      return;
+    }
+    entries.forEach(([tag,count]) => {
+      const item = document.createElement('span');
+      item.className = 'tag-item';
+      const tcolors = getTagColors(tag);
+      item.style.background = tcolors.bg;
+      item.style.color = tcolors.color;
+
+      const label = document.createElement('input');
+      label.type = 'text';
+      label.value = tag;
+      label.title = `${count} tasks`;
+
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'tag-action-btn';
+      saveBtn.textContent = '✎';
+      saveBtn.title = 'Rename tag';
+      saveBtn.addEventListener('click', () => {
+        const newName = label.value.trim();
+        if (!newName) { alert('Tag name cannot be empty'); label.value = tag; return; }
+        if (newName.toLowerCase() === tag) return;
+        renameTag(tag, newName);
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'tag-action-btn';
+      delBtn.textContent = '🗑️';
+      delBtn.title = 'Delete tag';
+      delBtn.addEventListener('click', () => deleteTag(tag));
+
+      const countSpan = document.createElement('span');
+      countSpan.style.marginLeft = '0.4rem';
+      countSpan.style.fontWeight = '700';
+      countSpan.textContent = `(${count})`;
+
+      item.appendChild(label);
+      item.appendChild(countSpan);
+      item.appendChild(saveBtn);
+      item.appendChild(delBtn);
+      mgr.appendChild(item);
+    });
+  }
+
+  const tagFilterSelect = document.getElementById('tag-filter-select');
+  if (tagFilterSelect) {
+    tagFilterSelect.addEventListener('change', (e) => {
+      const val = e.target.value || null;
+      activeTagFilter = val;
+      renderTasks();
+    });
+  }
+
+  const clearTagFilterBtn = document.getElementById('clear-tag-filter-btn');
+  if (clearTagFilterBtn) {
+    clearTagFilterBtn.addEventListener('click', () => {
+      activeTagFilter = null;
+      const sel = document.getElementById('tag-filter-select');
+      if (sel) sel.value = '';
+      renderTasks();
+    });
+  }
+
+  const tagsInputEl = document.getElementById('task-tags');
+  if (tagsInputEl) {
+    tagsInputEl.addEventListener('input', (e) => {
+      const cleaned = sanitizeTagInputValue(e.target.value);
+      if (cleaned !== e.target.value.trim()) {
+        e.target.value = cleaned;
+      }
+      const prefix = getCurrentTagPrefix();
+      renderTagSuggestions(prefix);
+    });
+    tagsInputEl.addEventListener('focus', () => renderTagSuggestions(getCurrentTagPrefix()));
+    tagsInputEl.addEventListener('blur', () => setTimeout(() => renderTagSuggestions(''), 150));
+  }
+
+  const manageTagsBtn = document.getElementById('manage-tags-btn');
+  if (manageTagsBtn) {
+    manageTagsBtn.addEventListener('click', () => {
+      const mgr = document.getElementById('tag-manager');
+      if (!mgr) return;
+      const shown = mgr.style.display !== 'none';
+      mgr.style.display = shown ? 'none' : 'flex';
+      if (!shown) renderTagManager();
+    });
+  }
+
+  renderPopularTags();
+
   // --- Export/Import Functions ---
   function exportTasks() {
     const dataStr = JSON.stringify(tasks, null, 2);
@@ -521,9 +898,16 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const imported = JSON.parse(e.target.result);
         if (Array.isArray(imported)) {
-          tasks = imported;
+          tasks = imported.map(normalizeTask);
+          tagRegistry = {};
+          tasks.forEach(t => {
+            if (Array.isArray(t.tags)) t.tags.forEach(tag => tagRegistry[tag] = (tagRegistry[tag] || 0) + 1);
+          });
+          saveTags();
           saveTasks();
+          renderPopularTags();
           renderTasks();
+          updateTaskProgressBar();
           alert("Tasks imported successfully!");
         } else {
           alert("Invalid file format.");
@@ -536,24 +920,33 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- Weather Functions ---
+  function cancelOngoingWeatherRequest() {
+    if (currentWeatherController) {
+      try {
+        currentWeatherController.abort();
+      } catch (e) {}
+      currentWeatherController = null;
+    }
+  }
+
   async function fetchWeather(city, attempt = 0) {
     if (!city) {
-      weatherInfo.innerHTML =
-        '<p class="loading-text">Enter a city to see the weather...</p>';
+      weatherInfo.innerHTML = '<p class="loading-text">Enter a city to see the weather...</p>';
       return;
     }
-    weatherInfo.innerHTML =
-      '<p class="loading-text">Loading weather data...</p>';
-    const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(
-      city
-    )}&appid=${weatherApiKey}&units=metric`;
 
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), WEATHER_TIMEOUT_MS);
+    cancelOngoingWeatherRequest();
+    weatherInfo.innerHTML = '<p class="loading-text">Loading weather data...</p>';
+    const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${weatherApiKey}&units=metric`;
+
+    currentWeatherController = new AbortController();
+    const controller = currentWeatherController;
+    const timeoutId = setTimeout(() => controller.abort(), WEATHER_TIMEOUT_MS);
 
     try {
       const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(id);
+      clearTimeout(timeoutId);
+      if (controller.signal.aborted) return;
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -561,7 +954,7 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
         if (response.status === 404) {
-          showWeatherError("City not found.");
+          showWeatherError(`We couldn't find "${city}". Please check the spelling or try another city.`);
           return;
         }
         throw new Error(`Server error (${response.status})`);
@@ -570,26 +963,32 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await response.json();
       displayWeather(data);
     } catch (error) {
-      clearTimeout(id);
+      clearTimeout(timeoutId);
       if (error.name === "AbortError") {
-        showWeatherError("Request timed out.", attempt);
+        if (attempt < MAX_RETRIES) {
+          showWeatherError("Request timed out.", attempt);
+        }
       } else {
         showWeatherError("Weather data currently unavailable.", attempt);
       }
+    } finally {
+      if (currentWeatherController === controller) currentWeatherController = null;
     }
   }
 
   async function fetchWeatherByCoords(lat, lon, attempt = 0) {
-    weatherInfo.innerHTML =
-      '<p class="loading-text">Loading weather data...</p>';
+    cancelOngoingWeatherRequest();
+    weatherInfo.innerHTML = '<p class="loading-text">Loading weather data...</p>';
     const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${weatherApiKey}&units=metric`;
 
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), WEATHER_TIMEOUT_MS);
+    currentWeatherController = new AbortController();
+    const controller = currentWeatherController;
+    const timeoutId = setTimeout(() => controller.abort(), WEATHER_TIMEOUT_MS);
 
     try {
       const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(id);
+      clearTimeout(timeoutId);
+      if (controller.signal.aborted) return;
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -602,12 +1001,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await response.json();
       displayWeather(data);
     } catch (error) {
-      clearTimeout(id);
+      clearTimeout(timeoutId);
       if (error.name === "AbortError") {
-        showWeatherError("Request timed out.", attempt);
+        if (attempt < MAX_RETRIES) showWeatherError("Request timed out.", attempt);
       } else {
         showWeatherError("Weather data currently unavailable.", attempt);
       }
+    } finally {
+      if (currentWeatherController === controller) currentWeatherController = null;
     }
   }
 
@@ -656,14 +1057,28 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- Weather Search Events ---
+  const debouncedFetchWeather = debounce(() => {
+    const city = cityInput.value.trim();
+    if (city === "") {
+      cancelOngoingWeatherRequest();
+      weatherInfo.innerHTML = '<p class="loading-text">Enter a city to see the weather...</p>';
+      return;
+    }
+    fetchWeather(city);
+  }, DEBOUNCE_DELAY);
+
+  cityInput.addEventListener("input", debouncedFetchWeather);
+
   cityInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       fetchWeather(cityInput.value.trim());
     }
   });
+
   searchWeatherBtn.addEventListener("click", () => {
     fetchWeather(cityInput.value.trim());
   });
+
   getLocationBtn.addEventListener("click", getLocationWeather);
 
   // --- Task Events ---
@@ -807,6 +1222,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Init ---
   function init() {
     renderTasks();
+    updateTaskProgressBar();
     if (yearSpan) yearSpan.textContent = new Date().getFullYear();
     getLocationWeather();
   }
