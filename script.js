@@ -1098,7 +1098,7 @@ document.addEventListener("DOMContentLoaded", () => {
       filterBtns.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       currentFilter = btn.dataset.filter;
-      renderTasks();
+      renderTasksWithSkeleton();
     });
   });
 
@@ -1117,7 +1117,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (taskSearch) {
     taskSearch.addEventListener("input", () => {
-      renderTasks();
+      renderTasksWithSkeleton();
     });
   }
 
@@ -1126,7 +1126,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const isActive = searchBtn.dataset.active === "true";
       searchBtn.dataset.active = isActive ? "false" : "true";
       searchBtn.classList.toggle("active", !isActive);
-      renderTasks();
+      renderTasksWithSkeleton();
     });
   }
 
@@ -1138,44 +1138,11 @@ document.addEventListener("DOMContentLoaded", () => {
         searchBtn.classList.remove("active");
       }
       if (searchCount) searchCount.textContent = "";
-      renderTasks();
+      renderTasksWithSkeleton();
     });
   }
 
-  window.addEventListener("keydown", (e) => {
-    const isMac = navigator.platform.toUpperCase().includes('MAC');
-    const mod = isMac ? e.metaKey : e.ctrlKey;
-    if (mod && e.key.toLowerCase() === 'f') {
-      if (taskSearch) {
-        e.preventDefault();
-        taskSearch.focus();
-        taskSearch.select();
-      }
-    }
-  });
-
-  // --- Export/Import Events ---
-  if (exportBtn) {
-    exportBtn.addEventListener("click", exportTasks);
-  }
-  if (importBtn && importFileInput) {
-    importBtn.addEventListener("click", () => importFileInput.click());
-    importFileInput.addEventListener("change", (e) => {
-      if (e.target.files.length > 0) {
-        importTasksFromFile(e.target.files[0]);
-        importFileInput.value = "";
-      }
-    });
-  }
-
-  // --- Theme Toggle ---
-  if (themeToggle) {
-    themeToggle.addEventListener("click", () => {
-      document.body.classList.toggle("dark-theme");
-    });
-  }
-
-  // --- Priority Sort Button ---
+  // For sort buttons:
   if (sortPriorityBtn) {
     sortPriorityBtn.addEventListener("click", () => {
       if (sortType === "priority") {
@@ -1185,11 +1152,10 @@ document.addEventListener("DOMContentLoaded", () => {
         sortType = "priority";
         sortPriorityBtn.textContent = "Clear Priority Sort";
       }
-      renderTasks();
+      renderTasksWithSkeleton();
     });
   }
 
-  // --- Date Sort Button ---
   if (sortDateBtn) {
     sortDateBtn.addEventListener("click", () => {
       if (sortType === "date") {
@@ -1199,11 +1165,10 @@ document.addEventListener("DOMContentLoaded", () => {
         sortType = "date";
         sortDateBtn.textContent = "Clear Date Sort";
       }
-      renderTasks();
+      renderTasksWithSkeleton();
     });
   }
 
-  // --- Sort A-Z Button ---
   if (sortTasksBtn) {
     sortTasksBtn.addEventListener("click", () => {
       if (sortType === "title") {
@@ -1215,11 +1180,186 @@ document.addEventListener("DOMContentLoaded", () => {
         sortState.direction = "asc";
       }
       saveSortState();
-      renderTasks();
+      renderTasksWithSkeleton();
     });
   }
 
-  // --- Init ---
+  // For tag filter select:
+  if (tagFilterSelect) {
+    tagFilterSelect.addEventListener('change', (e) => {
+      const val = e.target.value || null;
+      activeTagFilter = val;
+      renderTasksWithSkeleton();
+    });
+  }
+
+  // For clear tag filter:
+  if (clearTagFilterBtn) {
+    clearTagFilterBtn.addEventListener('click', () => {
+      activeTagFilter = null;
+      const sel = document.getElementById('tag-filter-select');
+      if (sel) sel.value = '';
+      renderTasksWithSkeleton();
+    });
+  }
+
+  // For add/delete/complete/clear actions, keep renderTasks() for instant update:
+  // --- Skeleton Loader ---
+  function showTaskSkeleton(count = 5) {
+    taskList.innerHTML = "";
+    const skeletonUl = document.createElement("ul");
+    skeletonUl.className = "skeleton-list";
+    for (let i = 0; i < count; i++) {
+      const li = document.createElement("li");
+      li.className = "skeleton-item";
+      // Title
+      const title = document.createElement("div");
+      title.className = "skeleton-bar long";
+      title.innerHTML = '<div class="skeleton-shimmer"></div>';
+      // Date Added
+      const date = document.createElement("div");
+      date.className = "skeleton-bar short";
+      date.innerHTML = '<div class="skeleton-shimmer"></div>';
+      // Due Date
+      const due = document.createElement("div");
+      due.className = "skeleton-bar short";
+      due.innerHTML = '<div class="skeleton-shimmer"></div>';
+      // Priority
+      const priority = document.createElement("div");
+      priority.className = "skeleton-bar circle";
+      priority.innerHTML = '<div class="skeleton-shimmer"></div>';
+      // Status
+      const status = document.createElement("div");
+      status.className = "skeleton-bar medium";
+      status.innerHTML = '<div class="skeleton-shimmer"></div>';
+      // Delete
+      const del = document.createElement("div");
+      del.className = "skeleton-bar circle";
+      del.innerHTML = '<div class="skeleton-shimmer"></div>';
+
+      li.appendChild(title);
+      li.appendChild(date);
+      li.appendChild(due);
+      li.appendChild(priority);
+      li.appendChild(status);
+      li.appendChild(del);
+      skeletonUl.appendChild(li);
+    }
+    taskList.appendChild(skeletonUl);
+  }
+
+  
+  function renderTasksWithSkeleton() {
+    showTaskSkeleton(6); 
+    setTimeout(() => {
+      renderTasks();
+    }, 700);
+  }
+
+
+  function init() {
+    renderTasksWithSkeleton();
+    updateTaskProgressBar();
+    if (yearSpan) yearSpan.textContent = new Date().getFullYear();
+    getLocationWeather();
+  }
+
+  
+  filterBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      filterBtns.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFilter = btn.dataset.filter;
+      renderTasksWithSkeleton();
+    });
+  });
+
+  if (taskSearch) {
+    taskSearch.addEventListener("input", () => {
+      renderTasksWithSkeleton();
+    });
+  }
+
+  if (searchBtn) {
+    searchBtn.addEventListener("click", () => {
+      const isActive = searchBtn.dataset.active === "true";
+      searchBtn.dataset.active = isActive ? "false" : "true";
+      searchBtn.classList.toggle("active", !isActive);
+      renderTasksWithSkeleton();
+    });
+  }
+
+  if (clearSearchBtn) {
+    clearSearchBtn.addEventListener("click", () => {
+      if (taskSearch) taskSearch.value = "";
+      if (searchBtn) {
+        searchBtn.dataset.active = "false";
+        searchBtn.classList.remove("active");
+      }
+      if (searchCount) searchCount.textContent = "";
+      renderTasksWithSkeleton();
+    });
+  }
+
+  
+  if (sortPriorityBtn) {
+    sortPriorityBtn.addEventListener("click", () => {
+      if (sortType === "priority") {
+        sortType = "none";
+        sortPriorityBtn.textContent = "Sort by Priority";
+      } else {
+        sortType = "priority";
+        sortPriorityBtn.textContent = "Clear Priority Sort";
+      }
+      renderTasksWithSkeleton();
+    });
+  }
+
+  if (sortDateBtn) {
+    sortDateBtn.addEventListener("click", () => {
+      if (sortType === "date") {
+        sortType = "none";
+        sortDateBtn.textContent = "Sort by Date";
+      } else {
+        sortType = "date";
+        sortDateBtn.textContent = "Clear Date Sort";
+      }
+      renderTasksWithSkeleton();
+    });
+  }
+
+  if (sortTasksBtn) {
+    sortTasksBtn.addEventListener("click", () => {
+      if (sortType === "title") {
+        sortType = "none";
+        sortState.direction = sortState.direction === "asc" ? "desc" : "asc";
+      } else {
+        sortType = "title";
+        sortState.key = "title";
+        sortState.direction = "asc";
+      }
+      saveSortState();
+      renderTasksWithSkeleton();
+    });
+  }
+
+  if (tagFilterSelect) {
+    tagFilterSelect.addEventListener('change', (e) => {
+      const val = e.target.value || null;
+      activeTagFilter = val;
+      renderTasksWithSkeleton();
+    });
+  }
+
+  if (clearTagFilterBtn) {
+    clearTagFilterBtn.addEventListener('click', () => {
+      activeTagFilter = null;
+      const sel = document.getElementById('tag-filter-select');
+      if (sel) sel.value = '';
+      renderTasksWithSkeleton();
+    });
+  }
+
   function init() {
     renderTasks();
     updateTaskProgressBar();
