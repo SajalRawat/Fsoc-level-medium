@@ -145,6 +145,7 @@ closeBtn.addEventListener("click", () => {
 
   function normalizeTask(t) {
     return {
+      id: t.id || (t.created ? String(t.created) : (Date.now() + Math.random()).toString(36)),
       text: t.text || "",
       description: t.description || "",
       tags: Array.isArray(t.tags) ? t.tags : [],
@@ -315,6 +316,7 @@ closeBtn.addEventListener("click", () => {
   }
 
   function clearAllTasks() {
+    if (!confirm("Are you sure you want to delete ALL tasks? This cannot be undone.")) return;
     tasks = [];
     tagRegistry = {};
     saveTags();
@@ -474,9 +476,10 @@ closeBtn.addEventListener("click", () => {
     if (q && searchBtn && searchBtn.dataset.active === "true") filteredTasks = matches;
 
     // Sorting
+    // Sorting: user-driven sortType takes precedence; otherwise only sort by column when a key is explicitly set
     if (sortType !== "none") {
       filteredTasks = sortTasksByType(filteredTasks);
-    } else {
+    } else if (sortState && sortState.key) {
       filteredTasks = sortTasksByColumn(filteredTasks);
     }
 
@@ -516,9 +519,12 @@ closeBtn.addEventListener("click", () => {
     taskList.appendChild(header);
 
     filteredTasks.forEach((task) => {
-      const originalIndex = tasks.findIndex((t) => t === task);
+      const originalIndex = tasks.findIndex((t) => t.id === task.id);
       const li = document.createElement("li");
       li.className = "task-item";
+      // mark as draggable-enabled for pointer-based DnD
+      li.classList.add('draggable-task');
+      li.dataset.id = task.id;
       li.dataset.index = originalIndex;
       li.style.display = "grid";
       li.style.gridTemplateColumns = "2fr 1fr 1fr 1fr 1fr 0.5fr";
@@ -627,6 +633,9 @@ closeBtn.addEventListener("click", () => {
       li.appendChild(statusCell);
       li.appendChild(deleteBtn);
       taskList.appendChild(li);
+
+      // Pointer-based drag handlers (works with mouse and touch via Pointer Events)
+      li.addEventListener('pointerdown', onTaskPointerDown);
     });
 
     // Add sorting event listeners to column headers
@@ -645,6 +654,155 @@ closeBtn.addEventListener("click", () => {
         renderTasks();
       });
     });
+  }
+
+  // --- Drag & Drop (pointer-based) ---
+  let dragState = {};
+
+  function onTaskPointerDown(e) {
+    // only start on primary button / primary pointer
+    if (e.button && e.button !== 0) return;
+    const li = e.currentTarget;
+    // avoid starting drag when interacting with interactive controls
+    if (e.target.closest('input,select,button,a,textarea,option')) return;
+
+    e.preventDefault();
+    li.setPointerCapture(e.pointerId);
+
+    dragState = {
+      originLi: li,
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      dragging: false
+    };
+
+    document.addEventListener('pointermove', onTaskPointerMove);
+    document.addEventListener('pointerup', onTaskPointerUp);
+    document.addEventListener('pointercancel', onTaskPointerUp);
+  }
+
+  function onTaskPointerMove(e) {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+
+    const dy = e.clientY - dragState.startY;
+    // require small threshold before starting drag to avoid accidental drags
+    if (!dragState.dragging && Math.abs(dy) < 6) return;
+
+    if (!dragState.dragging) {
+      // initialize drag visuals
+      const li = dragState.originLi;
+      const rect = li.getBoundingClientRect();
+
+      // placeholder
+      const placeholder = document.createElement('li');
+      placeholder.className = 'drag-placeholder';
+      placeholder.style.height = rect.height + 'px';
+
+      li.parentNode.insertBefore(placeholder, li.nextSibling);
+
+      // clone shown under pointer
+      const clone = li.cloneNode(true);
+      clone.classList.add('drag-clone');
+      clone.style.position = 'fixed';
+      clone.style.left = rect.left + 'px';
+      clone.style.width = rect.width + 'px';
+      clone.style.top = rect.top + 'px';
+      clone.style.pointerEvents = 'none';
+      clone.style.zIndex = 9999;
+
+      document.body.appendChild(clone);
+
+      li.style.visibility = 'hidden';
+
+      dragState.dragging = true;
+      dragState.clone = clone;
+      dragState.placeholder = placeholder;
+      dragState.offsetY = e.clientY - rect.top;
+    }
+
+    // move clone
+    if (dragState.clone) {
+      dragState.clone.style.top = (e.clientY - dragState.offsetY) + 'px';
+    }
+
+    // determine where to move placeholder
+    const children = Array.from(taskList.querySelectorAll('li.task-item'));
+    let insertBeforeEl = null;
+    for (let i = 0; i < children.length; i++) {
+      const el = children[i];
+      if (el === dragState.originLi) continue;
+      const r = el.getBoundingClientRect();
+      const mid = r.top + r.height / 2;
+      if (e.clientY < mid) {
+        insertBeforeEl = el;
+        break;
+      }
+    }
+
+    if (insertBeforeEl) taskList.insertBefore(dragState.placeholder, insertBeforeEl);
+    else taskList.appendChild(dragState.placeholder);
+  }
+
+  function onTaskPointerUp(e) {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+
+    document.removeEventListener('pointermove', onTaskPointerMove);
+    document.removeEventListener('pointerup', onTaskPointerUp);
+    document.removeEventListener('pointercancel', onTaskPointerUp);
+
+    if (dragState.dragging) {
+      const placeholder = dragState.placeholder;
+      const originLi = dragState.originLi;
+
+      // place the original li where the placeholder is
+      placeholder.parentNode.insertBefore(originLi, placeholder);
+      originLi.style.visibility = '';
+
+      // clean up clone and placeholder
+      if (dragState.clone && dragState.clone.parentNode) dragState.clone.parentNode.removeChild(dragState.clone);
+      if (placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+
+      // rebuild tasks order while preserving tasks not currently visible (filters/search)
+      const orderedLis = Array.from(taskList.querySelectorAll('li.task-item'));
+      const visibleIds = orderedLis.map((it) => String(it.dataset.id));
+      const idToTask = new Map(tasks.map(t => [String(t.id), t]));
+      const visibleIdSet = new Set(visibleIds);
+      const reorderedVisibleTasks = visibleIds.map(id => idToTask.get(id)).filter(Boolean);
+
+      // find first original index among visible items to decide insertion point
+      const firstVisibleId = visibleIds[0];
+      const firstVisibleOldIndex = tasks.findIndex(t => String(t.id) === firstVisibleId);
+
+      const newTasksArr = [];
+      let inserted = false;
+      for (let i = 0; i < tasks.length; i++) {
+        const t = tasks[i];
+        if (visibleIdSet.has(String(t.id))) {
+          // skip visible tasks; they'll be inserted at the insertion point
+          continue;
+        }
+        if (!inserted && i === firstVisibleOldIndex) {
+          newTasksArr.push(...reorderedVisibleTasks);
+          inserted = true;
+        }
+        newTasksArr.push(t);
+      }
+      if (!inserted) newTasksArr.push(...reorderedVisibleTasks);
+
+      tasks = newTasksArr.map(normalizeTask);
+      // Clear sorting so manual order persists
+      sortType = 'none';
+      if (sortState) { sortState.key = null; }
+      saveSortState();
+      saveTasks();
+      renderTasksWithSkeleton();
+      updateTaskProgressBar();
+    } else {
+      // if drag never started, release pointer capture
+      try { dragState.originLi.releasePointerCapture(dragState.pointerId); } catch (e) {}
+    }
+
+    dragState = {};
   }
 
   // Tag helpers
@@ -973,7 +1131,7 @@ closeBtn.addEventListener("click", () => {
           return;
         }
         if (response.status === 404) {
-          showWeatherError(`We couldn't find "${city}". Please check the spelling or try another city.`);
+          showWeatherError(`Sorry, we couldn't find "${city}". Please check the spelling or try another city.`);
           return;
         }
         throw new Error(`Server error (${response.status})`);
@@ -1388,3 +1546,400 @@ closeBtn.addEventListener("click", () => {
 
   init();
 });
+
+// --- Command Pattern Core ---
+class Command {
+  execute() {}
+  undo() {}
+}
+
+class CommandManager {
+  constructor(limit = 20) {
+    this.undoStack = [];
+    this.redoStack = [];
+    this.limit = limit;
+  }
+
+  executeCommand(command) {
+    command.execute();
+    this.undoStack.push(command);
+    if (this.undoStack.length > this.limit) this.undoStack.shift();
+    this.redoStack = [];
+    updateButtons();
+  }
+
+  undo() {
+    const command = this.undoStack.pop();
+    if (command) {
+      command.undo();
+      this.redoStack.push(command);
+      updateButtons();
+      showToast("Undo performed");
+    }
+  }
+
+  redo() {
+    const command = this.redoStack.pop();
+    if (command) {
+      command.execute();
+      this.undoStack.push(command);
+      updateButtons();
+      showToast("Redo performed");
+    }
+  }
+
+  clearHistory() {
+    this.undoStack = [];
+    this.redoStack = [];
+    updateButtons();
+    showToast("Undo history cleared");
+  }
+}
+
+// --- Commands for actions ---
+class AddTaskCommand extends Command {
+  constructor(taskText) {
+    super();
+    this.taskText = taskText;
+    this.taskElement = null;
+  }
+
+  execute() {
+    this.taskElement = createTaskElement(this.taskText);
+    taskList.appendChild(this.taskElement);
+  }
+
+  undo() {
+    this.taskElement.remove();
+  }
+}
+
+class DeleteTaskCommand extends Command {
+  constructor(taskElement) {
+    super();
+    this.taskElement = taskElement;
+    this.taskText = taskElement.textContent.replace("Delete", "").trim();
+    this.index = [...taskList.children].indexOf(taskElement);
+  }
+
+  execute() {
+    this.taskElement.remove();
+  }
+
+  undo() {
+    const tasks = [...taskList.children];
+    if (this.index >= tasks.length) {
+      taskList.appendChild(this.taskElement);
+    } else {
+      taskList.insertBefore(this.taskElement, tasks[this.index]);
+    }
+  }
+}
+
+// --- Setup ---
+const taskInput = document.getElementById("taskInput");
+const addTaskBtn = document.getElementById("addTaskBtn");
+const taskList = document.getElementById("taskList");
+const undoBtn = document.getElementById("undoBtn");
+const redoBtn = document.getElementById("redoBtn");
+const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+const toast = document.getElementById("toast");
+
+const manager = new CommandManager();
+
+// --- Event Listeners ---
+addTaskBtn.addEventListener("click", () => {
+  const text = taskInput.value.trim();
+  if (text) {
+    manager.executeCommand(new AddTaskCommand(text));
+    taskInput.value = "";
+    showToast("Task added");
+  }
+});
+
+undoBtn.addEventListener("click", () => manager.undo());
+redoBtn.addEventListener("click", () => manager.redo());
+clearHistoryBtn.addEventListener("click", () => manager.clearHistory());
+
+// --- Keyboard Shortcuts ---
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key === "z") {
+    e.preventDefault();
+    manager.undo();
+  } else if ((e.ctrlKey && e.key === "y") || (e.ctrlKey && e.shiftKey && e.key === "Z")) {
+    e.preventDefault();
+    manager.redo();
+  }
+});
+
+// --- Helper Functions ---
+function createTaskElement(text) {
+  const li = document.createElement("li");
+  li.textContent = text;
+
+  const delBtn = document.createElement("button");
+  delBtn.textContent = "Delete";
+  delBtn.addEventListener("click", () => {
+    manager.executeCommand(new DeleteTaskCommand(li));
+    showToast("Task deleted");
+  });
+
+  li.appendChild(delBtn);
+  return li;
+}
+
+function showToast(message) {
+  toast.textContent = message;
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 2000);
+}
+
+function updateButtons() {
+  undoBtn.disabled = manager.undoStack.length === 0;
+  redoBtn.disabled = manager.redoStack.length === 0;
+}
+
+const shortcuts = {
+  addTask: 'Ctrl+N',
+  search: '/',
+  nextTask: 'ArrowDown',
+  prevTask: 'ArrowUp',
+  deleteTask: 'Delete',
+  openHelp: '?',
+  confirm: 'Enter',
+  cancel: 'Escape'
+};
+document.addEventListener('keydown', (e) => {
+  const key = getKeyCombo(e);
+
+  switch (key) {
+    case shortcuts.addTask:
+      e.preventDefault();
+      openAddTaskModal();
+      break;
+
+    case shortcuts.search:
+      e.preventDefault();
+      focusSearchInput();
+      break;
+
+    case shortcuts.nextTask:
+      navigateTask('next');
+      break;
+
+    case shortcuts.prevTask:
+      navigateTask('prev');
+      break;
+
+    case shortcuts.deleteTask:
+      deleteSelectedTask();
+      break;
+
+    case shortcuts.openHelp:
+      e.preventDefault();
+      toggleShortcutHelp();
+      break;
+
+    case shortcuts.confirm:
+      confirmModalAction();
+      break;
+
+    case shortcuts.cancel:
+      cancelModalAction();
+      break;
+
+    default:
+      break;
+  }
+});
+function getKeyCombo(e) {
+  let combo = '';
+  if (e.ctrlKey) combo += 'Ctrl+';
+  if (e.shiftKey) combo += 'Shift+';
+  if (e.altKey) combo += 'Alt+';
+  combo += e.key;
+  return combo;
+}
+
+const shortcuts = {
+  addTask: 'Ctrl+N',
+  search: '/',
+  nextTask: 'ArrowDown',
+  prevTask: 'ArrowUp',
+  deleteTask: 'Delete',
+  openHelp: '?',
+  confirm: 'Enter',
+  cancel: 'Escape'
+};
+document.addEventListener('keydown', (e) => {
+  const key = getKeyCombo(e);
+
+  switch (key) {
+    case shortcuts.addTask:
+      e.preventDefault();
+      openAddTaskModal();
+      break;
+
+    case shortcuts.search:
+      e.preventDefault();
+      focusSearchInput();
+      break;
+
+    case shortcuts.nextTask:
+      navigateTask('next');
+      break;
+
+    case shortcuts.prevTask:
+      navigateTask('prev');
+      break;
+
+    case shortcuts.deleteTask:
+      deleteSelectedTask();
+      break;
+
+    case shortcuts.openHelp:
+      e.preventDefault();
+      toggleShortcutHelp();
+      break;
+
+    case shortcuts.confirm:
+      confirmModalAction();
+      break;
+
+    case shortcuts.cancel:
+      cancelModalAction();
+      break;
+
+    default:
+      break;
+  }
+});
+function getKeyCombo(e) {
+  let combo = '';
+  if (e.ctrlKey) combo += 'Ctrl+';
+  if (e.shiftKey) combo += 'Shift+';
+  if (e.altKey) combo += 'Alt+';
+  combo += e.key;
+  return combo;
+}
+
+const taskInput = document.getElementById('task-input');
+const addTaskBtn = document.getElementById('add-task-btn');
+const taskList = document.getElementById('task-list');
+
+const tagInput = document.getElementById('tag-input');
+const tagColor = document.getElementById('tag-color');
+const addTagBtn = document.getElementById('add-tag-btn');
+const tagList = document.getElementById('tag-list');
+
+let tags = JSON.parse(localStorage.getItem('tags')) || [];
+let tasks = JSON.parse(localStorage.getItem('tasks')) || [];
+
+// Utility: Save to localStorage
+function saveData() {
+  localStorage.setItem('tags', JSON.stringify(tags));
+  localStorage.setItem('tasks', JSON.stringify(tasks));
+}
+
+// Render Tags
+function renderTags() {
+  tagList.innerHTML = '';
+  tags.forEach(tag => {
+    const li = document.createElement('li');
+    li.className = 'tag-badge';
+    li.textContent = tag.name;
+    li.style.backgroundColor = tag.color;
+    li.dataset.tag = tag.name;
+
+    // Click to filter tasks
+    li.addEventListener('click', () => {
+      li.classList.toggle('filter-active');
+      const activeFilters = [...tagList.querySelectorAll('.filter-active')].map(el => el.dataset.tag);
+      filterTasks(activeFilters);
+    });
+
+    tagList.appendChild(li);
+  });
+}
+
+// Filter tasks by active tags
+function filterTasks(activeTags) {
+  [...taskList.children].forEach(taskEl => {
+    const taskTags = taskEl.dataset.tags ? taskEl.dataset.tags.split(',') : [];
+    if (activeTags.length === 0 || activeTags.some(tag => taskTags.includes(tag))) {
+      taskEl.style.display = '';
+    } else {
+      taskEl.style.display = 'none';
+    }
+  });
+}
+
+// Render Tasks
+function renderTasks() {
+  taskList.innerHTML = '';
+  tasks.forEach(task => addTaskToDOM(task));
+}
+
+// Add task to DOM
+function addTaskToDOM(task) {
+  const li = document.createElement('li');
+  li.className = 'task-item';
+  li.textContent = task.name;
+  li.dataset.tags = task.tags.join(',');
+
+  // Add tag badges
+  task.tags.forEach(tagName => {
+    const tag = tags.find(t => t.name === tagName);
+    if (tag) {
+      const span = document.createElement('span');
+      span.className = 'tag-badge';
+      span.textContent = tag.name;
+      span.style.backgroundColor = tag.color;
+      li.appendChild(span);
+    }
+  });
+
+  taskList.appendChild(li);
+}
+
+// Add new task
+addTaskBtn.addEventListener('click', () => {
+  const name = taskInput.value.trim();
+  if (!name) return;
+
+  const selectedTags = tags.filter(tag => tag.selected).map(tag => tag.name);
+
+  const task = { name, tags: selectedTags };
+  tasks.push(task);
+
+  renderTasks();
+  taskInput.value = '';
+  saveData();
+});
+
+// Add new tag
+addTagBtn.addEventListener('click', () => {
+  const name = tagInput.value.trim();
+  if (!name || tags.some(t => t.name === name)) return;
+
+  const color = tagColor.value;
+  const tag = { name, color, selected: false };
+  tags.push(tag);
+
+  renderTags();
+  tagInput.value = '';
+  saveData();
+});
+
+// Toggle tag selection when creating tasks
+tagList.addEventListener('click', e => {
+  if (e.target.classList.contains('tag-badge')) {
+    const tag = tags.find(t => t.name === e.target.dataset.tag);
+    if (tag) tag.selected = !tag.selected;
+    e.target.classList.toggle('filter-active');
+  }
+});
+
+// Initialize
+renderTags();
+renderTasks();
