@@ -953,26 +953,3 @@ footer .footer-nav a:hover {
   100% { transform: translateX(100%); }
 }
 
-.shortcut-help {
-  position: fixed;
-  top: 20%;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #fff;
-  color: #333;
-  padding: 1rem 2rem;
-  border-radius: 10px;
-  box-shadow: 0 5px 20px rgba(0,0,0,0.2);
-  display: none;
-  z-index: 1000;
-}
-.shortcut-help.visible {
-  display: block;
-}
-.shortcut-help ul {
-  list-style: none;
-  padding: 0;
-}
-.shortcut-help li {
-  margin: 0.5rem 0;
-}

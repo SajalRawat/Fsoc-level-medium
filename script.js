@@ -1645,25 +1645,124 @@ function getKeyCombo(e) {
   combo += e.key;
   return combo;
 }
-function openAddTaskModal() {
-  document.getElementById('addTaskModal').classList.add('open');
+
+const taskInput = document.getElementById('task-input');
+const addTaskBtn = document.getElementById('add-task-btn');
+const taskList = document.getElementById('task-list');
+
+const tagInput = document.getElementById('tag-input');
+const tagColor = document.getElementById('tag-color');
+const addTagBtn = document.getElementById('add-tag-btn');
+const tagList = document.getElementById('tag-list');
+
+let tags = JSON.parse(localStorage.getItem('tags')) || [];
+let tasks = JSON.parse(localStorage.getItem('tasks')) || [];
+
+// Utility: Save to localStorage
+function saveData() {
+  localStorage.setItem('tags', JSON.stringify(tags));
+  localStorage.setItem('tasks', JSON.stringify(tasks));
 }
 
-function focusSearchInput() {
-  document.getElementById('searchInput').focus();
+// Render Tags
+function renderTags() {
+  tagList.innerHTML = '';
+  tags.forEach(tag => {
+    const li = document.createElement('li');
+    li.className = 'tag-badge';
+    li.textContent = tag.name;
+    li.style.backgroundColor = tag.color;
+    li.dataset.tag = tag.name;
+
+    // Click to filter tasks
+    li.addEventListener('click', () => {
+      li.classList.toggle('filter-active');
+      const activeFilters = [...tagList.querySelectorAll('.filter-active')].map(el => el.dataset.tag);
+      filterTasks(activeFilters);
+    });
+
+    tagList.appendChild(li);
+  });
 }
 
-function navigateTask(direction) {
-  const tasks = document.querySelectorAll('.task-item');
-  const active = document.querySelector('.task-item.active');
-  let index = [...tasks].indexOf(active);
-  if (direction === 'next' && index < tasks.length - 1) index++;
-  if (direction === 'prev' && index > 0) index--;
-  tasks.forEach(t => t.classList.remove('active'));
-  tasks[index].classList.add('active');
-  tasks[index].scrollIntoView({ behavior: 'smooth', block: 'center' });
+// Filter tasks by active tags
+function filterTasks(activeTags) {
+  [...taskList.children].forEach(taskEl => {
+    const taskTags = taskEl.dataset.tags ? taskEl.dataset.tags.split(',') : [];
+    if (activeTags.length === 0 || activeTags.some(tag => taskTags.includes(tag))) {
+      taskEl.style.display = '';
+    } else {
+      taskEl.style.display = 'none';
+    }
+  });
 }
 
-function toggleShortcutHelp() {
-  document.getElementById('shortcutHelp').classList.toggle('visible');
+// Render Tasks
+function renderTasks() {
+  taskList.innerHTML = '';
+  tasks.forEach(task => addTaskToDOM(task));
 }
+
+// Add task to DOM
+function addTaskToDOM(task) {
+  const li = document.createElement('li');
+  li.className = 'task-item';
+  li.textContent = task.name;
+  li.dataset.tags = task.tags.join(',');
+
+  // Add tag badges
+  task.tags.forEach(tagName => {
+    const tag = tags.find(t => t.name === tagName);
+    if (tag) {
+      const span = document.createElement('span');
+      span.className = 'tag-badge';
+      span.textContent = tag.name;
+      span.style.backgroundColor = tag.color;
+      li.appendChild(span);
+    }
+  });
+
+  taskList.appendChild(li);
+}
+
+// Add new task
+addTaskBtn.addEventListener('click', () => {
+  const name = taskInput.value.trim();
+  if (!name) return;
+
+  const selectedTags = tags.filter(tag => tag.selected).map(tag => tag.name);
+
+  const task = { name, tags: selectedTags };
+  tasks.push(task);
+
+  renderTasks();
+  taskInput.value = '';
+  saveData();
+});
+
+// Add new tag
+addTagBtn.addEventListener('click', () => {
+  const name = tagInput.value.trim();
+  if (!name || tags.some(t => t.name === name)) return;
+
+  const color = tagColor.value;
+  const tag = { name, color, selected: false };
+  tags.push(tag);
+
+  renderTags();
+  tagInput.value = '';
+  saveData();
+});
+
+// Toggle tag selection when creating tasks
+tagList.addEventListener('click', e => {
+  if (e.target.classList.contains('tag-badge')) {
+    const tag = tags.find(t => t.name === e.target.dataset.tag);
+    if (tag) tag.selected = !tag.selected;
+    e.target.classList.toggle('filter-active');
+  }
+});
+
+// Initialize
+renderTags();
+renderTasks();
