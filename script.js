@@ -296,6 +296,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function clearAllTasks() {
+    if (!confirm("Are you sure you want to delete ALL tasks? This cannot be undone.")) return;
     tasks = [];
     tagRegistry = {};
     saveTags();
