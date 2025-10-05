@@ -900,4 +900,55 @@ footer .footer-nav a:hover {
 }
 
 .footer {
-    background-color: var(--card-
+    background-color: var(--card-bg-color);
+    padding: 2rem;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px 0 var(--shadow-color);
+    margin-top: 2rem;
+}
+
+/* --- Skeleton Loader Styles --- */
+.skeleton-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.skeleton-item {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr 0.5fr;
+  align-items: center;
+  padding: 0.5rem 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(0,0,0,0.03);
+  position: relative;
+  overflow: hidden;
+}
+.skeleton-bar {
+  height: 18px;
+  border-radius: 8px;
+  background: #e0e7ef;
+  margin-bottom: 6px;
+  position: relative;
+  overflow: hidden;
+}
+.skeleton-bar.short { width: 60%; }
+.skeleton-bar.medium { width: 80%; }
+.skeleton-bar.long { width: 95%; }
+.skeleton-bar.circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #e0e7ef;
+  margin: 0 auto;
+}
+.skeleton-shimmer {
+  position: absolute;
+  top: 0; left: 0; height: 100%; width: 100%;
+  background: linear-gradient(90deg, #e0e7ef 0%, #f4f7f9 50%, #e0e7ef 100%);
+  animation: shimmer 1.2s infinite linear;
+  opacity: 0.5;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
