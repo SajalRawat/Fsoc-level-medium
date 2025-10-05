@@ -1521,3 +1521,149 @@ function updateButtons() {
   undoBtn.disabled = manager.undoStack.length === 0;
   redoBtn.disabled = manager.redoStack.length === 0;
 }
+
+const shortcuts = {
+  addTask: 'Ctrl+N',
+  search: '/',
+  nextTask: 'ArrowDown',
+  prevTask: 'ArrowUp',
+  deleteTask: 'Delete',
+  openHelp: '?',
+  confirm: 'Enter',
+  cancel: 'Escape'
+};
+document.addEventListener('keydown', (e) => {
+  const key = getKeyCombo(e);
+
+  switch (key) {
+    case shortcuts.addTask:
+      e.preventDefault();
+      openAddTaskModal();
+      break;
+
+    case shortcuts.search:
+      e.preventDefault();
+      focusSearchInput();
+      break;
+
+    case shortcuts.nextTask:
+      navigateTask('next');
+      break;
+
+    case shortcuts.prevTask:
+      navigateTask('prev');
+      break;
+
+    case shortcuts.deleteTask:
+      deleteSelectedTask();
+      break;
+
+    case shortcuts.openHelp:
+      e.preventDefault();
+      toggleShortcutHelp();
+      break;
+
+    case shortcuts.confirm:
+      confirmModalAction();
+      break;
+
+    case shortcuts.cancel:
+      cancelModalAction();
+      break;
+
+    default:
+      break;
+  }
+});
+function getKeyCombo(e) {
+  let combo = '';
+  if (e.ctrlKey) combo += 'Ctrl+';
+  if (e.shiftKey) combo += 'Shift+';
+  if (e.altKey) combo += 'Alt+';
+  combo += e.key;
+  return combo;
+}
+
+const shortcuts = {
+  addTask: 'Ctrl+N',
+  search: '/',
+  nextTask: 'ArrowDown',
+  prevTask: 'ArrowUp',
+  deleteTask: 'Delete',
+  openHelp: '?',
+  confirm: 'Enter',
+  cancel: 'Escape'
+};
+document.addEventListener('keydown', (e) => {
+  const key = getKeyCombo(e);
+
+  switch (key) {
+    case shortcuts.addTask:
+      e.preventDefault();
+      openAddTaskModal();
+      break;
+
+    case shortcuts.search:
+      e.preventDefault();
+      focusSearchInput();
+      break;
+
+    case shortcuts.nextTask:
+      navigateTask('next');
+      break;
+
+    case shortcuts.prevTask:
+      navigateTask('prev');
+      break;
+
+    case shortcuts.deleteTask:
+      deleteSelectedTask();
+      break;
+
+    case shortcuts.openHelp:
+      e.preventDefault();
+      toggleShortcutHelp();
+      break;
+
+    case shortcuts.confirm:
+      confirmModalAction();
+      break;
+
+    case shortcuts.cancel:
+      cancelModalAction();
+      break;
+
+    default:
+      break;
+  }
+});
+function getKeyCombo(e) {
+  let combo = '';
+  if (e.ctrlKey) combo += 'Ctrl+';
+  if (e.shiftKey) combo += 'Shift+';
+  if (e.altKey) combo += 'Alt+';
+  combo += e.key;
+  return combo;
+}
+function openAddTaskModal() {
+  document.getElementById('addTaskModal').classList.add('open');
+}
+
+function focusSearchInput() {
+  document.getElementById('searchInput').focus();
+}
+
+function navigateTask(direction) {
+  const tasks = document.querySelectorAll('.task-item');
+  const active = document.querySelector('.task-item.active');
+  let index = [...tasks].indexOf(active);
+  if (direction === 'next' && index < tasks.length - 1) index++;
+  if (direction === 'prev' && index > 0) index--;
+  tasks.forEach(t => t.classList.remove('active'));
+  tasks[index].classList.add('active');
+  tasks[index].scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function toggleShortcutHelp() {
+  document.getElementById('shortcutHelp').classList.toggle('visible');
+}
