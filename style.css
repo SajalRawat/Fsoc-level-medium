@@ -952,3 +952,33 @@ footer .footer-nav a:hover {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(100%); }
 }
+
+/* Drag & Drop styles */
+.drag-clone {
+    box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+    transform: scale(1.02);
+    transition: transform 0.12s ease, opacity 0.12s ease;
+    opacity: 0.98;
+    border-radius: 8px;
+    background: var(--card-bg-color);
+}
+
+.drag-placeholder {
+    border: 2px dashed rgba(79,140,255,0.35);
+    background: rgba(79,140,255,0.03);
+    border-radius: 8px;
+    margin: 6px 0;
+    transition: height 0.2s ease, background 0.15s ease;
+}
+
+/* Make touch targets larger during drag */
+.draggable-task {
+    touch-action: none; /* allow pointer events for touch dragging */
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .drag-clone, .task-progress-bar-fill, #task-progress-ring {
+        transition: none !important;
+        animation: none !important;
+    }
+}
